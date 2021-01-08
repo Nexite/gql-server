@@ -16,6 +16,7 @@ import createCalendarSchema from './remotes/calendar';
 import createTwitchSchema from './remotes/twitch';
 import { addAuthContext } from './auth';
 import { weave } from './schema';
+import bodyParser from 'body-parser';
 
 const port = process.env.PORT || 4000;
 
@@ -64,8 +65,8 @@ export default async () => {
     }),
   });
 
-
   const app = Express();
+  app.use('/', bodyParser.json());
   app.use(graphqlUploadExpress({ maxFileSize: 100 * 1024 * 1024, maxFiles: 3 }));
   apollo.applyMiddleware({ app, path: '/' });
 
@@ -73,10 +74,10 @@ export default async () => {
 
   server.listen(port, () => {
     new SubscriptionServer({
-        schema,
-        execute,
-        subscribe,
-      }, { server, path: '/subscriptions'});
+      schema,
+      execute,
+      subscribe,
+    }, { server, path: '/subscriptions' });
     console.log(`Listening on http://0.0.0.0:${port}`);
   });
 };

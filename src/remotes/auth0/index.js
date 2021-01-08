@@ -4,12 +4,12 @@ import { delegateToSchema } from '@graphql-tools/delegate';
 import { makeExecutableSchema } from '@graphql-tools/schema';
 import { TransformQuery } from '@graphql-tools/wrap';
 import { Kind } from 'graphql';
-import { scopes, requireAnyOfScopes } from '../../auth';
+import { scopes, requireAnyOfScopes, hasScope } from '../../auth';
 import query from './query';
 import LruCache from 'lru-cache';
 import fetch from "node-fetch";
 import { formatName } from './utils';
-import { GraphQLUpload } from 'apollo-server';
+import { GraphQLUpload, PubSub } from 'apollo-server';
 import Uploader from '@codeday/uploader-node';
 
 const typeDefs = fs.readFileSync(path.join(__dirname, 'schema.gql')).toString();
@@ -67,6 +67,8 @@ function getConnectionResolvers(prefix, schemas) {
   };
 }
 const uploader = new Uploader(process.env.UPLOADER_URL, process.env.UPLOADER_SECRET);
+const pubsub = new PubSub();
+
 export default function createAuth0Schema(domain, clientId, clientSecret) {
   const {
     findUsers,
@@ -113,25 +115,49 @@ export default function createAuth0Schema(domain, clientId, clientSecret) {
           ...updates
         }
         newUser.name = (updates.displayNameFormat ? formatName(newUser.displayNameFormat, newUser.givenName, newUser.familyName) : newUser.name)
+        pubsub.publish("user", {
+          user: {
+            mutation: "update",
+            id: newUser.id
+          }
+        });
         return newUser;
       });
     },
     grantBadge: async (_, { where, badge }, ctx) => {
-      await updateUser(where, ctx, (prev) => ({
-        ...prev,
-        badges: [
-          ...(prev.badges || []).filter((b) => b.id !== badge.id),
-          badge,
-        ]
-      }));
+      await updateUser(where, ctx, (prev) => {
+        const newUser = {
+          ...prev,
+          badges: [
+            ...(prev.badges || []).filter((b) => b.id !== badge.id),
+            badge,
+          ]
+        }
+        pubsub.publish("user", {
+          user: {
+            mutation: "badgesUpdate",
+            id: newUser.id
+          }
+        });
+        return newUser;
+      });
     },
     revokeBadge: async (_, { where, badge }, ctx) => {
-      await updateUser(where, ctx, (prev) => ({
-        ...prev,
-        badges: [
-          ...(prev.badges || []).filter((b) => b.id !== badge.id)
-        ]
-      }));
+      await updateUser(where, ctx, (prev) => {
+        const newUser = {
+          ...prev,
+          badges: [
+            ...(prev.badges || []).filter((b) => b.id !== badge.id)
+          ]
+        }
+        pubsub.publish("user", {
+          user: {
+            mutation: "badgesUpdate",
+            id: newUser.id
+          }
+        });
+      });
+      return newUser;
     },
     setDisplayedBadges: async (_, { where, badges }, ctx) => {
       if (!ctx.user && !where) {
@@ -146,14 +172,24 @@ export default function createAuth0Schema(domain, clientId, clientSecret) {
         displayedBadges.map((badge, index) => { badge.order = badges.find(x => x.id === badge.id).order; })
         displayedBadges.sort((a, b) => a.order - b.order)
         displayedBadges.map((badge, index) => { badge.displayed = true; badge.order = index; })
-        
+
         const notDisplayedBadges = prev.badges.filter((badge) => !badges.some(e => e.id === badge.id))
         notDisplayedBadges.map((badge) => { badge.displayed = false; badge.order = null; })
 
-        return { ...prev, badges: [...displayedBadges, ...notDisplayedBadges] }
+        const newUser = { ...prev, badges: [...displayedBadges, ...notDisplayedBadges] }
+        pubsub.publish("user", {
+          user: {
+            mutation: "badgesUpdate",
+            id: newUser.id
+          }
+        });
+
+        return newUser;
       });
     },
-    uploadPicture: async (_, { upload }, ctx) => {
+    uploadProfilePicture: async (_, { where, upload }, ctx) => {
+      requireAnyOfScopes(ctx, [scopes.writeUsers, ctx.user ? `write:user:${ctx.user}` : null])
+      where = ctx.user ? { id: ctx.user } : where
       const { createReadStream, filename } = await upload;
       const chunks = [];
       // eslint-disable-next-line no-restricted-syntax
@@ -163,11 +199,26 @@ export default function createAuth0Schema(domain, clientId, clientSecret) {
       const uploadBuffer = Buffer.concat(chunks);
 
       const result = await uploader.image(uploadBuffer, filename || '_.jpg');
+      if (!result.url) {
+        throw new Error("An error occured while uploading your picture. Please refresh the page and try again.")
+      }
+      await updateUser(where, ctx, (prev) => ({ ...prev, picture: result.url }))
 
       return result.url
     },
     addRole: async (_, { id, roleId }, ctx) => {
+      if (ctx.user) {
+        id = ctx.user
+      }
       addRole(id, roleId, ctx)
+      console.log("id: ", id)
+      const user = await findUsersUncached({ id }, ctx)
+      pubsub.publish("user", {
+        user: {
+          mutation: "roleUpdate",
+          id,
+        }
+      });
     }
   }
   const lru = new LruCache({ maxAge: 1000 * 60 * 5, max: 500 });
@@ -215,6 +266,14 @@ export default function createAuth0Schema(domain, clientId, clientSecret) {
       return result;
     }
   };
+
+  resolvers.Subscription = {
+    user: {
+      subscribe: (payload) => {
+        return pubsub.asyncIterator('user')
+      }
+    }
+  }
 
   const schema = makeExecutableSchema({
     typeDefs,
