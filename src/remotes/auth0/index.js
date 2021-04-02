@@ -223,28 +223,24 @@ export default function createAuth0Schema(domain, clientId, clientSecret) {
         return user
       });
     },
-    setDisplayedBadges: async (_, { where, badges }, ctx) => {
+    setDisplayedBadges: async (_, { where, badges: displayedBadges }, ctx) => {
       if (!ctx.user && !where) {
         throw new Error("Please specify a user to update.")
-      } else if (badges.length > MAX_DISPLAYED_BADGES) {
+      } else if (displayedBadges.length > MAX_DISPLAYED_BADGES) {
         throw new Error("Displayed badges cannot be more than 3.")
       }
       where = ctx.user ? { id: ctx.user } : where
 
       await updateUser(where, ctx, (prev) => {
-        const oldDisplayedBadges = prev.badges.filter((b) => b.displayed === true).slice(0, MAX_DISPLAYED_BADGES)
-        const displayedBadges = prev.badges.filter((badge) => badges.some((e) => e.id === badge.id));
-        if (Object.keys(oldDisplayedBadges).length === Object.keys(displayedBadges).length
-          && Object.keys(oldDisplayedBadges).every(p => oldDisplayedBadges[p] === displayedBadges[p])) {
-          return true
-        }
-        displayedBadges.map((badge, index) => { badge.order = badges.find(x => x.id === badge.id).order; })
-        displayedBadges.sort((a, b) => a.order - b.order)
+        console.log(displayedBadges)
+        displayedBadges = displayedBadges.filter((badge) => prev.badges.some((e) => e.id === badge.id)).sort((a, b) => a.order - b.order)
         displayedBadges.map((badge, index) => { badge.displayed = true; badge.order = index; })
-
-        const notDisplayedBadges = prev.badges.filter((badge) => !badges.some(e => e.id === badge.id))
+        console.log(displayedBadges)
+        const notDisplayedBadges = prev.badges.filter((badge) => !displayedBadges.some(e => e.id === badge.id))
         notDisplayedBadges.map((badge) => { badge.displayed = false; badge.order = null; })
-        const user = { ...prev, badges: [...displayedBadges, ...notDisplayedBadges] }
+
+        const user = { ...prev, badges: [...displayedBadges, ...notDisplayedBadges]}
+
         pubsub.publish("userDisplayedBadgesUpdate", {
           userDisplayedBadgesUpdate: {
             ...user
