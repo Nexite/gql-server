@@ -15,7 +15,7 @@ export const hasAnyOfScopes = (ctx, requiredScopes) => {
     return false;
   }
   return true
-}
+};
 
 export const requireAnyOfScopes = (ctx, requiredScopes) => {
   requiredScopes = requiredScopes.filter(Boolean);

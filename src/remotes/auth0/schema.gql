@@ -19,6 +19,23 @@ type User {
   discordInformation: DiscordInformation
 }
 
+type DiscordUser {
+  id: ID!
+  name: String
+  username: String
+  bio: String
+  discordId: String
+  pronoun: String
+  badges(displayed: Boolean): [DiscordUserBadge]
+}
+
+type DiscordUserBadge {
+  id: ID!
+  displayed: Boolean
+  order: Int
+  expiresUtc: String
+}
+
 input UpdateUserInput {
   username: String
   blocked: Boolean
@@ -96,6 +113,7 @@ input UserSearch {
   familyName: String
   name: String
   username: String
+  discordId: String
 }
 
 type SubscriptionUser {
@@ -118,7 +136,9 @@ type SubscriptionBadge {
 
 type Query {
   getUser(where: UserSingleInput!, fresh: Boolean): User
+  getDiscordUsers: [DiscordUser]!
   searchUsers(where: UserSearch!): [User]!
+  userRoles(id: ID!): [Role]
   roleUsers(roleId: String!): [User]!
   roles: [Role]!
 }
